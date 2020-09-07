@@ -1,0 +1,1190 @@
+---
+title: "Gasoline Price Predictor 2020"
+author: "Christopher Page"
+date: "9/7/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Project Repository
+
+https://github.com/cjpage/gasoline_price_predictor_2020
+
+## Introduction/Overview/Executive Summary
+
+Gasoline, one of the products derived from crude oil, is an important commodity. ^[A simple explanation of oil and products derived from oil is available at https://www.eia.gov/energyexplained/oil-and-petroleum-products/]  Much like crude oil, gasoline commands collective attention enabled by analysis. One of the key metrics to take into account in the analysis of the gasoline industry is the daily closing price of gasoline futures traded on a global basis in such venues as the New York Mercantile Exchange ^[https://www.cmegroup.com/company/nymex.html covers in depth and detail not only gasoline but other commodities traded via the New York Mercantile Exchange.]. 
+
+Methods for predicting that price may entail studying the quantitative and qualitative factors at play inside the gasoline industry as well as in such adjacent industries as tourism and automobile manufacturing. They may also entail studying the often complex diplomatic, military, economic, cultural, and environmental developments that help explain why gasoline closing prices rise and fall as they do over time. 
+
+This project proposes a simpler method, one that predicts gasoline closing prices based on time and the closing prices of complementary (e.g., crude oil) and competing (e.g., platinum) commodities. The premise is that there is much to be learned by studying the behaviors of commodity traders engaged in making daily investment decisions based on running evaluations of risks and rewards. 
+
+That premise informed the development of algorithms with the potential to predict gasoline closing prices with a viable level of accuracy, quantified as the Root Means Square Error (RMSE). Using a data set constructed with publicly available information downloaded for free from https://www.nasdaq.com/, the author developed and then evaluated eleven such algorithms.
+
+The evaluation process led to the selection of one algorithm that produced the lowest RMSE when applied to a randomly generated test set. That algorithm used a Ranger model ^[Characterized by https://www.rdocumentation.org/ as a "fast implementation of random forests"] which took into account the *year* and *month* components of time as well as the closing prices of six other globally traded commodities: (1) *heating oil*, (2) *crude oil*, (3) *platinum*, (4) *silver*, (5) *wheat*, and (6) *soybeans*.
+
+The RMSE in question was **0.55**, a figure equating to 9% of the RMSE produced by an initial algorithm that only took into account the average closing price of gasoline across the period of observation.  Because of the relatively small RMSE, the selected algorithm could be considered analytically viable and, therefore, of use to those engaged in analzing the gasoline industry.
+
+## Method/Analysis
+
+##### Loading Libraries
+
+The first step was to load all of the necessary *R* libraries from the publicly available repository http://cran.us.r-project.org. Those
+libraries included *caret*, *caTools*, *dplyr*, *forcats*, *foreach*, *gam*, *ggplot2*, *ggrepel*, *ggthemes*, *knitr*, *lubridate*, *purrr*, *randomForest*, *ranger*, and *tidyverse*.  The *randomForest* and *ranger* packages proved to be of particular value because of the models they introduced.
+
+```{r load libraries, warning=FALSE, message=FALSE, echo = FALSE}
+
+### This part of the script loads the necessary libraries from the repository http://cran.us.r-project.org
+
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(caTools)) install.packages("caTools", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(dslabs)) install.packages("dslabs", repos = "http://cran.us.r-project.org")
+if(!require(forcats)) install.packages("forcats", repos = "http://cran.us.r-project.org")
+if(!require(foreach)) install.packages("foreach", repos = "http://cran.us.r-project.org")
+if(!require(gam)) install.packages("gam", repos = "http://cran.us.r-project.org")
+if(!require(ggplot2)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(ggrepel)) install.packages("ggrepel", repos = "http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos = "http://cran.us.r-project.org")
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(purrr)) install.packages("purrr", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+if(!require(ranger)) install.packages("ranger", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+
+```
+##### Loading and Wrangling Data
+
+The second step entailed loading the 25,192-row x 4-column *commodity_closing_prices_2010_2020.csv*, a file containing commodity closing prices for a period of observation extending from the beginning of August 2010 to the end of July 2020, and then wrangling the data in a manner that would result in ready access to information detailing the cyclical and linear components of time as well as the daily closing prices of gasoline and nine other commodities from the energy, precious metals, and agriculture sectors. The primary output of this step in the process was a 2,519-row x 19-column *crude_oil_in_commodites_market* data set with the following structure.
+
+```{r load download and wrangle data, warning=FALSE, message=FALSE, echo = FALSE}
+
+### This part of the script reads "data/commodity_closing_prices_2010_2020.csv" into a new data frame named "commodities"
+### Then, it mutates the resulting data set in way that will enable the envisioned analysis
+### Next, it saves that data frame into a .RDATA data set under the RDA subdirectory
+
+commodities <- read_csv("data/commodity_closing_prices_2010_2020.csv")
+
+commodities <- commodities %>%
+  rename(date = Date) %>%
+  mutate(date = as.Date(mdy(date))) %>%
+  mutate(date_year = year(date)) %>%
+  mutate(date_quarter_of_the_year = quarter(date)) %>%
+  mutate(date_month = round_date(date, unit = "months")) %>%
+  mutate(date_month_of_the_year = month(date)) %>%
+  mutate(date_day = day(date)) %>%
+  mutate(date_weekday = weekdays(date)) %>%
+  rename(commodity = Commodity) %>%
+  rename(sector = Sector) %>%
+  rename(closing_price = `Closing Price`)
+
+save(commodities, file = "rda/commodities.rdata")
+
+### This part generates and saves data sets focused on the energy, precious metals, and agricultural sectors
+
+energy <- commodities %>%
+  filter(sector == 'Energy')
+save(energy, file = "rda/energy.rdata")
+
+precious_metals <- commodities %>%
+  filter(sector == 'Precious Metals')
+save(precious_metals, file = "rda/precious_metals.rdata")
+
+agriculture <- commodities %>%
+  filter(sector == 'Agriculture')
+save(agriculture, file = "rda/agriculture.rdata")
+
+### This part generates and saves a data set focused on gasoline
+
+gasoline <- energy %>%
+  filter(commodity == 'Gasoline')
+save(gasoline, file = "rda/gasoline.rdata")
+
+### This part generates and saves data sets focused on the commodities (other than gasoline) in the energy sector
+
+natural_gas <- energy %>%
+  filter(commodity == 'Natural Gas') %>%
+  rename(natural_gas_closing_price = closing_price)
+save(natural_gas, file = "rda/natural_gas.rdata")
+
+heating_oil <- energy %>%
+  filter(commodity == 'Heating Oil') %>%
+  rename(heating_oil_closing_price = closing_price)
+save(natural_gas, file = "rda/heating_oil.rdata")
+
+crude_oil <- energy %>%
+  filter(commodity == 'Crude Oil') %>%
+  rename(crude_oil_closing_price = closing_price)
+save(gasoline, file = "rda/crude_oil.rdata")
+
+### This part generates and saves data sets focused on the commodities in the precious metals sector
+
+gold <- precious_metals %>%
+  filter(commodity == 'Gold') %>%
+  rename(gold_closing_price = closing_price)
+save(natural_gas, file = "rda/gold.rdata")
+
+silver <- precious_metals %>%
+  filter(commodity == 'Silver') %>%
+  rename(silver_closing_price = closing_price)
+save(natural_gas, file = "rda/silver.rdata")
+
+platinum <- precious_metals %>%
+  filter(commodity == 'Platinum') %>%
+  rename(platinum_closing_price = closing_price)
+save(gasoline, file = "rda/platinum.rdata")
+
+### This part generates and saves data sets focused on the commodities in the agriculture sector
+
+wheat <- agriculture %>%
+  filter(commodity == 'Wheat') %>%
+  rename(wheat_closing_price = closing_price)
+save(wheat, file = "rda/wheat.rdata")
+
+rice <- agriculture %>%
+  filter(commodity == 'Rice') %>%
+  rename(rice_closing_price = closing_price)
+save(rice, file = "rda/rice.rdata")
+
+soybeans <- agriculture %>%
+  filter(commodity == 'Soybeans') %>%
+  rename(soybeans_closing_price = closing_price)
+save(soybeans, file = "rda/soybeans.rdata")
+
+### This part generates a table that compares gasoline's closing price to the closing prices of all other commodities
+
+natural_gas_price_table <- natural_gas %>% select(date, natural_gas_closing_price)
+heating_oil_price_table <- heating_oil %>% select(date, heating_oil_closing_price)
+crude_oil_price_table <- crude_oil %>% select(date, crude_oil_closing_price)
+
+gold_price_table <- gold %>% select(date, gold_closing_price)
+silver_price_table <- silver %>% select(date, silver_closing_price)
+platinum_price_table <- platinum %>% select(date, platinum_closing_price)
+
+wheat_price_table <- wheat %>% select(date, wheat_closing_price)
+rice_price_table <- rice %>% select(date, rice_closing_price)
+soybeans_price_table <- soybeans %>% select(date, soybeans_closing_price)
+
+gasoline_in_commodities_market <- gasoline %>%
+  left_join(natural_gas_price_table) %>%
+  left_join(heating_oil_price_table) %>%
+  left_join(crude_oil_price_table) %>%
+  left_join(gold_price_table) %>%
+  left_join(silver_price_table) %>%
+  left_join(platinum_price_table) %>%
+  left_join(wheat_price_table) %>%
+  left_join(rice_price_table) %>%
+  left_join(soybeans_price_table)
+
+```
+
+```{r display structure of the data set for crude oil in commodities market, warning=FALSE, message=FALSE, echo = TRUE}
+
+str(gasoline_in_commodities_market)
+
+```
+\newpage
+
+##### Exploring Gasoline in Isolation
+
+Wrangling enabled explotatory data analyses that began with an examination of gasoline in isolation across the ten-year period of observation.  A plot generated through that examination made clear the history of gasoline closing prices as they rose and, more generally, fell between the beginning of August 2010 and end of July 2020.  
+
+```{r begin exploratory data analysis of gasoline in isolation, warning=FALSE, message=FALSE, echo = FALSE}
+
+minimum_gasoline_price_during_period <- min(gasoline$closing_price)
+maximum_gasoline_price_during_period <- max(gasoline$closing_price)
+mean_gasoline_price_during_period <- mean(gasoline$closing_price)
+standard_deviation_during_period <- sd(gasoline$closing_price)
+
+Parameters <- c("Mininum", 
+                "Maximum", 
+                "Mean", 
+                "Standard Deviation")
+
+Values <- c(minimum_gasoline_price_during_period, 
+            maximum_gasoline_price_during_period, 
+            mean_gasoline_price_during_period, 
+            standard_deviation_during_period)
+
+gasoline_summary <- data.frame(Parameters, Values)
+
+```
+
+```{r display of minimum, maximum, mean, and standard deviation, warning=FALSE, message=FALSE, echo = FALSE}
+
+kable(gasoline_summary)
+
+```
+
+```{r generate plot of gasoline prices across the period of observation, warning=FALSE, message=FALSE, echo = FALSE}
+
+### Plots the 2010-2020 timeline of gasoline daily closing prices
+### Saves the plot in a .png file entitled "gasoline_price_history"
+
+gasoline_plot <- gasoline %>%
+  ggplot(aes(date, closing_price)) +
+  geom_point(aes(color = commodity)) +
+  xlab("Date") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Price History") +
+  theme_economist() +
+    theme(legend.position="top",
+          legend.title = element_blank(),
+          legend.box = "horizontal" ,
+          legend.text=element_text(size=8.5)) +
+    guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot showing gasoline closing prices for the 2010-2020 period of observation")
+
+ggsave("fig/gasoline_price_history.png")
+
+```
+
+```{r show plot of gasoline prices across the period of observation, warning=FALSE, message=FALSE, echo = FALSE}
+
+plot(gasoline_plot)
+
+```
+\newpage
+
+The next step in the exploration process was to examine gasoline's 2010-2020 closing price history in terms of the cyclical components of time, namely the *day of the trading week* (Monday, Tuesday,...,Friday) as well as the *month of the year* (1, 2,..., 12) and the *quarter of the year* (1, 2,.., 4).  The hope was that one or more of those components would emerge as a clear differentiator and, thus, a promising predictor.  The results, exemplified by the following graph of gasoline closing prices by *quarter of the year*, revealed none to be promising.  Those results argued against such suggestions as "prices tend to be higher on the final day of the trading week" or "prices tend to be lower during the opening quarter of the year."  
+
+```{r generate plots of gasoline prices by cyclical components of time, warning=FALSE, message=FALSE, echo = FALSE}
+
+### Plots the average gasoline closing prices by day of the trading week for 2010-2020
+### Saves the plot in a .png file entitled "gasoline_average_by_day_of_the_week"
+
+gasoline_average_by_day_of_the_week_plot <- gasoline_in_commodities_market %>%
+  group_by(date_weekday) %>%
+  ggplot(aes(as.factor(date_weekday), closing_price)) +
+  geom_boxplot(aes(color = commodity), size = 0.5, show.legend = FALSE) +
+  xlab("Day of the Trading Week") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Closing Price by Trading Day") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Boxplots showing breakout of gasoline closing prices by day of the trading week")
+
+ggsave("fig/gasoline_average_by_day_of_the_week.png")
+
+### Plots the average gasoline closing prices by month of the year for 2010-2020
+### Saves the plot in a .png file entitled "gasoline_average_by_month_of_the_year
+
+gasoline_average_by_month_of_the_year_plot <- gasoline_in_commodities_market %>%
+  group_by(date_month_of_the_year) %>%
+  ggplot(aes(as.factor(date_month_of_the_year), closing_price)) +
+  geom_boxplot(aes(color = commodity), size = 0.5, show.legend = FALSE) +
+  xlab("Month of the Year") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Closing Price by Month of the Year") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Boxplots showing breakout of gasoline closing prices by month of the year")
+
+ggsave("fig/gasoline_average_by_month_of_the_year.png")
+
+#### Plots the average gasoline closing prices by quarter of the year for 2010-2020
+#### Saves the plot in a .png file entitled "gasoline_average_by_month_of_the_year
+
+gasoline_average_by_quarter_of_the_year_plot <- gasoline_in_commodities_market %>%
+  group_by(date_quarter_of_the_year) %>%
+  ggplot(aes(as.factor(date_quarter_of_the_year), closing_price)) +
+  geom_boxplot(aes(color = commodity), size = 0.5, show.legend = FALSE) +
+  xlab("Quarter of the Year") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Price by Quarter of the Year") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Boxplots showing breakout of gasoline closing prices by quarter of the year")
+
+ggsave("fig/gasoline_average_by_quarter_of_the_year.png")
+
+```
+
+```{r show plot of crude oil by quarter of the year, warning=FALSE, message=FALSE, echo = FALSE}
+#### Displays the plot showing average gasoline closing prices by quarter of the year for 2010-2020
+
+
+plot(gasoline_average_by_quarter_of_the_year_plot)
+
+```
+\newpage
+
+Unlike the cyclical components of time, the linear components, namely the *year* and *month* of each observation, proved to be very promising.  As the following plot illustrates, the results of exploratory data analysis efforts in this area confirmed that *year* was a clear differentiator and, consequently, a potentially useful predictor of gasoline closing prices.  At this point in the process, there was reason to believe *year* and, even more significantly, *month* would feature prominently in the stronger of the algorithms to be developed and subsequently evaluated.
+
+
+```{r generate plots of gasoline prices by linear components of time, warning=FALSE, message=FALSE, echo = FALSE}
+
+### Plots the average gasoline closing prices by month for each month in 2010-2020
+### Saves the plot in a .png file entitled "gasoline_average_by_month"
+
+gasoline_average_by_month <- gasoline_in_commodities_market %>%
+  group_by(date_month) %>%
+  mutate(month_avg = mean(closing_price))
+
+gasoline_average_by_month_plot <- gasoline_average_by_month %>%
+  ggplot(aes(date_month, month_avg)) +
+  geom_point(aes(color = commodity), shape = 18, size = 3, show.legend = FALSE) +
+  xlab("Month") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Price by Month") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot showing breakout of average gasoline closing prices by month for each month in 2010-2020")
+
+ggsave("fig/gasoline_average_by_month.png")
+
+#### It plots the average gasoline closing prices by year for each year in 2010-2020
+#### Then, it saves the plot in a .png file entitled "gasoline_average_by_year"
+
+gasoline_average_by_year <- gasoline_in_commodities_market %>%
+  group_by(date_year) %>%
+  mutate(year_avg = mean(closing_price))
+
+gasoline_average_by_year_plot <- gasoline_average_by_year %>%
+  ggplot(aes(as.factor(date_year), year_avg)) +
+  geom_point(aes(color = commodity), shape = 18, size = 5, show.legend = FALSE) +
+  xlab("Year") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline Price by Year") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot showing breakout of average gasoline closing prices by year for each year in 2010-2020")
+
+ggsave("fig/gasoline_average_by_year.png")
+
+```
+
+```{r show plot of gasoline by year, warning=FALSE, message=FALSE, echo = FALSE}
+#### Displays the plot showing average gasoline closing prices by year for 2010-2020
+
+
+plot(gasoline_average_by_year_plot)
+
+```
+\newpage
+
+##### Exploring Crude Oil in Comparison to other Energy Sector Commodities
+
+While the linear components of time were interesting, they weren't in and of themselves necessarily compelling.  For that reason, attention turned next to examining gasoline closing price trends for the 2010-2020 period of observation in comparison to closing price trends for three complementary commodities from the energy sector. Those three complementary commodities were *heating oil*, *natural gas*, and *crude oil*. The chart made clear that *gasoline*, much like *heating oil* and *natural gas*, was much more stable from a closing price perspective than *crude oil*.
+
+```{r generate plot comparing crude oil to other commodities in the energy sector, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Plot the 2010-2020 timeline of gasoline daily closing prices compared to those of the other energy sector commodities
+#### Saves the plot in a .png file entitled "gasoline_price_history_in_comparison_to_three_other_energy_sector_commodities"
+
+gasoline_vs_other_energy_plot <- energy %>%
+  ggplot(aes(date, closing_price)) +
+  geom_point(aes(color = commodity)) +
+  xlab("Date") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline vs Other Energy Commodities") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot comparing gasoline closing prices to those of three other commodities from the energy sector")
+
+ggsave("fig/gasoline_in_comparison_to_three_other_energy_sector_commodities.png")
+
+```
+
+```{r show plot of crude oil in comparison to other energy sector commodities, warning=FALSE, message=FALSE, echo = FALSE}
+#### Displays the plot showing average crude oil closing prices in comparison to those of natural gas, heating oil, and gasoline
+
+plot(gasoline_vs_other_energy_plot)
+
+```
+\newpage
+
+The daily closing prices of the other energy sector commodities became much more interesting when the time came to look at their correlations to the primary commodity being studied.  As exemplified by the following diagram, *heating oil* and *crude oil* had the clearest correlations to *gasoline*.  Because of those correlations, there was reason to believe that *heating oil* and *crude oil* would, much like *year* and *month*, emerge as useful predictors of gasoline closing prices.
+
+```{r generate plots of crude oil in comparison to other energy sector commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Generate scatterplots portraying the relationships between gasoline closing prices and those of the other energy commodities
+
+gasoline_natural_gas_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, natural_gas_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Natural Gas Closing Price") +
+  ggtitle("Gasoline and Natural Gas") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and natural gas closing prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_natural_gas.png")
+
+gasoline_heating_oil_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, heating_oil_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Heating Oil Closing Price") +
+  ggtitle("Gasoline and Heating Oil") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and heating oil closing prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_heating_oil.png")
+
+gasoline_crude_oil_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, crude_oil_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Crude Oil Closing Price") +
+  ggtitle("Gasoline and Crude Oil") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and crude oil closing prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_crude_oil.png")
+
+```
+
+```{r show plot of gasoline in comparison to heating oil, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Displays the plot showing crude oil closing prices in comparison to those of heating oil
+
+plot(gasoline_heating_oil_scatterplot)
+
+```
+
+\newpage
+
+##### Exploring Gasoline in Comparison to Precious Metals Commodities
+
+Attention then turned to examining gasoline closing price trends for the 2010-2020 period of observation in comparison to closing price trends for three commodities in the precious metals sectors. Those three competing commodities were *gold*, *silver*, and *platinum*. 
+
+```{r generate plot comparing gasoline to precious metals commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Plot the 2010-2020 timeline of gasoline daily closing prices compared to those of the three precious metals commodities
+#### Saves the plot in a .png file entitled "gasoline_price_history_in_comparison_to_three_precious_metals_commodities"
+
+gasoline_vs_precious_metals <- bind_rows(gasoline, precious_metals)
+
+gasoline_vs_precious_metals_plot <- gasoline_vs_precious_metals %>%
+  ggplot(aes(date, closing_price)) +
+  geom_point(aes(color = commodity)) +
+  xlab("Date") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline versus Precious Metals") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot comparing gasoline closing prices to those of three commodities from the precious metals sector")
+
+ggsave("fig/gasoline_in_comparison_to_three_precious_metals_sector_commodities.png")
+
+```
+
+```{r show plots of gasoline in comparison to precious metals, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Displays the plot showing average gasoline oil closing prices in comparison to those of gold, silver, and platinum
+
+plot(gasoline_vs_precious_metals_plot)
+
+```
+\newpage
+
+A deeper examination revealed the *platinum* and *silver* had the clearest correlations.  That revelation gave rise to the assumption that *platinum* and *silver* would, much like *heating oil* and *crude oil* as well as *year* and *month*,  prove to be useful predictors when the time came to develop and evaluate algorithms for predicting gasoline closing prices.
+
+```{r generate plots of gasoline in comparison to precious metals sector commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Generates scatterplots portraying the relationships between gasoline closing prices and those of the precious metal commodities
+
+gasoline_gold_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, gold_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Gold Closing Price") +
+  ggtitle("Crude Oil an Gold") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and gold prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_gold.png")
+
+gasoline_silver_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, silver_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Silver Closing Price") +
+  ggtitle("Gasoline and Silver") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and silver prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_silver.png")
+
+gasoline_platinum_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, platinum_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Platinum Closing Price") +
+  ggtitle("Gasoline and Platinum") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and platinum prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_platinum.png")
+
+```
+
+```{r show plot of gasoline in comparison to platinum, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Displays the plot showing gasoline closing prices in comparison to those of platinum
+
+plot(gasoline_platinum_scatterplot)
+
+```
+
+\newpage
+
+##### Exploring Crude Oil in Comparison to Agriculture Commodities
+
+As a final step in the process of exploratory data analysis, attention shifted to examining gasoline closing price trends for the 2010-2020 period of observation in comparison to closing price trends for three commodities in the agriculture sectors. Those three competing commodities were *wheat*, *rice*, and *soybeans*.
+
+```{r generate plot comparing gasoline to agriculture commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+### Plots the 2010-2020 timeline of gasoline daily closing prices compared to those of the three agricultural commodities
+### Saves the plot in a .png file entitled "gasoline_price_history_in_comparison_to_three_competing_agriculture_sector_commodities"
+
+gasoline_vs_agriculture <- bind_rows(gasoline, agriculture)
+
+gasoline_vs_agriculture_plot <- gasoline_vs_agriculture %>%
+  ggplot(aes(date, closing_price)) +
+  geom_point(aes(color = commodity)) +
+  xlab("Date") +
+  ylab("Closing Price") +
+  ggtitle("Gasoline versus Agricultural Commodities") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Plot comparing gasoline closing prices to those of three commodities from the agriculture sector")
+
+ggsave("fig/gasoline_in_comparison_to_three_agricultural_sector_commodities.png")
+
+```
+
+```{r show plots of gasoline in comparison to agriculture commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Displays the plot showing average gasoline closing prices in comparison to those of wheat, silver, and soybeans
+
+plot(gasoline_vs_agriculture_plot)
+
+```
+
+\newpage
+
+A deeper examination revealed that *soybeans* and *wheat* had the closest correlations to *crude oil*.  That revelation resulted in the addition of *soybeans* and *wheat* to a promising predictors list that already included *platinum*, *silver*, *heating oil*, *crude oil*, *year*, and *month*.  The assumption was those those predictors would feature prominently in the strongest of the algorithms to be developed and evaluated.  Thanks to the exploratory data analysis, the path to an analytially viable prediction algorithm had become clearer.
+
+```{r generate plots of gasoline in comparison to agriculture sector commodities, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Generates scatterplots portraying the relationships between gasoline closing prices and those of the agriculture commodities
+
+gasoline_wheat_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, wheat_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Wheat Closing Price") +
+  ggtitle("Gasoline and Wheat") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1)) +
+  labs(caption = "Scatterplot of gasoline and wheat prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_wheat.png")
+
+gasoline_rice_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, rice_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Rice Closing Price") +
+  ggtitle("Gasoline and Rice") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1))+
+  labs(caption = "Scatterplot of gasoline and rice prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_rice.png")
+
+gasoline_soybeans_scatterplot <- gasoline_in_commodities_market %>%
+  ggplot(aes(closing_price, soybeans_closing_price)) +
+  geom_point(aes(color = commodity), size = 1, show.legend = FALSE) +
+  xlab("Gasoline Closing Price") +
+  ylab("Soybean Closing Price") +
+  ggtitle("Gasoline and Soybeans") +
+  theme_economist() +
+  theme(legend.position="top",
+        legend.title = element_blank(),
+        legend.box = "horizontal" ,
+        legend.text=element_text(size=8.5)) +
+  guides(col = guide_legend(nrow = 1))+
+  labs(caption = "Scatterplot of gasoline and soybean prices across the 2010-2020 period of observation")
+
+ggsave("fig/scatterplot_gasoline_versus_soybean.png")
+
+```
+
+``` {r show plot of gasoline in comparison to soybeans, warning=FALSE, message=FALSE, echo = FALSE}
+
+#### Displays the plot showing gasoline closing prices in comparison to those of soybeans
+
+plot(gasoline_soybeans_scatterplot)
+
+```
+\newpage
+
+##### Generating training and testing sets from the commodities data
+
+After completing the exploratory data analysis steps, the focus of the project turned to the generation of the *training*, *validation*, and *testing* sets. The *training* set would be used to train the gasoline price prediction algorithms being developed.  The *validation* set would be used to evaluate each candidate algorithm's performance in terms of RMSE.  The *testing* set would be employed at the end of the process to evaluate the final model ^[See https://towardsdatascience.com/train-validation-and-test-sets-72cb40cba9e7 for a good explanation of the roles of training, validation, and training sets.].
+
+Because gasoline closing prices in the original data set had a 0.31 Coefficient of Variation (CV), calculated by dividing the 0.65 Standard Deviation (SD) ^[See https://ncalculators.com/statistics/coefficient-of-variance-calculator.htm#:~:text=The%20method%20of%20measuring%20the%20ratio%20of%20standard,%28%CF%83%29%20%2F%20Mean%20%28%CE%BC%29%29will%20be%20multiplied%20by%20100 for a good explanation of CV's role in Quality Assurance (QA) as a means of "determining the content or quality of the sample data."] by the 2.10 mean, the decision was made to hold-back 31% of *gasoline_in_commodites_market* for testing purposes.  That decision was later validated by trial runs demonstrating the accuracies obtained by using 69% of the data for *training and validation* and 31% for *testing.*
+
+The same logic was used to determine the optimal split of the remaining 66% into the *training* and *validation* sets.  The CV of that remainder was 33%.  To mitigate the risk, identified after several trial runs, of overtraining, a 10% margin was added to that figure. Consequently, *p* was set at 0.43.
+
+``` {r generation of training and testing sets, warning=FALSE, message=FALSE, echo = TRUE}
+
+### Generate 31% hold-out TEST set to be used in validation of final algorithm
+
+set.seed(1)
+
+test_index <- createDataPartition(y = gasoline_in_commodities_market$commodity, 
+                                  times = 1, p = 0.31, list = FALSE)
+
+gasoline_in_commodities_market_train <- gasoline_in_commodities_market[-test_index,]
+
+gasoline_test <- gasoline_in_commodities_market[test_index,]
+
+### Split remaining 69% into TRAIN and VALIDATE sets
+
+set.seed(755)
+
+test_index <- createDataPartition(y = gasoline_in_commodities_market_train$commodity, 
+                                  times = 1, p = 0.43, list = FALSE)
+
+gasoline_train <- gasoline_in_commodities_market_train[-test_index,]
+
+gasoline_validate <- gasoline_in_commodities_market_train[test_index,]
+
+```
+
+``` {r definition of RMSE, warning=FALSE, message=FALSE, echo = FALSE}
+RMSE <- function(true_ratings, predicted_ratings){
+     sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+##### Algorithm 01 (Average)
+
+The next step involved developing and then evaluating the prediction algorithms, the first of which predicted gasoline closing prices based solely on the average gasoline price for the 2010-2020 period of observation.  It would serve as a baseline from which to compare the analytical viability of other, more sophisticated algorithms.  Not surprisingly, it had an RMSE closely approximating the 0.65 standard deviation of the original data set.
+
+``` {r algorithm 01, warning=FALSE, message=FALSE, echo = TRUE}
+
+mu <- mean(gasoline_train$closing_price)
+
+predicted_price_algorithm_01 <- mu
+
+RMSE01 <- RMSE(predicted_price_algorithm_01, 
+               gasoline_validate$closing_price)
+
+RMSE01
+
+```
+
+##### Algorithm 02 (Year Effects)
+
+Incorporating *year*, the first of the two linear time components identified as promising through exploratotary data analysis, the second algorithm generated an RMSE that was signficantly smaller and, therefore, more analytically viable.  That second algorithm relied not on the overall average but the yearly averages for each year in the 2010-2020 period of observation.
+
+``` {r algorithm 02, warning=FALSE, message=FALSE, echo = TRUE}
+
+gasoline_average_by_year <- gasoline_train %>%
+  group_by(date_year) %>%
+  summarize(b_y = mean(closing_price))
+
+predicted_price_algorithm_02 <- 
+  gasoline_validate %>%
+  left_join(gasoline_average_by_year, 
+            by= 'date_year') %>%
+  pull(b_y)
+
+RMSE02 <- RMSE(predicted_price_algorithm_02, 
+               gasoline_validate$closing_price)
+
+RMSE02
+
+
+```
+
+##### Algorithm 03 (Month Effects)
+
+Incorporating *month*, the second of the two linear time components identified as promising through exploratotary data analysis, the third algorithm generated an RMSE that was even smaller and, therefore, more analytically viable.  That third algorithm relied on the monthly averages for each of the months in the 2010-2020 period of observation.
+
+``` {r algorithm 03, warning=FALSE, message=FALSE, echo = TRUE}
+
+gasoline_average_by_month <- 
+  gasoline_train %>%
+  group_by(date_month) %>%
+  summarize(b_m = mean(closing_price))
+
+predicted_price_algorithm_03 <- 
+  gasoline_validate %>%
+  left_join(gasoline_average_by_month, 
+            by= 'date_month') %>%
+  mutate(pred = b_m) %>%
+  pull(pred)
+
+RMSE03 <- RMSE(predicted_price_algorithm_03, 
+               gasoline_validate$closing_price)
+
+RMSE03
+
+```
+#### Algorithm 04 (Random Forest - Time)
+
+While the RMSE from the third algorithm was good, it still wasn't good enough to be of great use to analysts studying the gasoline industry.  With the goal of generating a much more robust outcome, attention shifted to the use of a Random Forest that first incoporating all of the cyclical and linear components of time before zeroing-in on the most significant.  Those most significant of those components were, as anticipated, *year* and *month*.  The RMSE generated through a Random Forest incorporating *year* and *month* was small but, again, not small enough to be analytically valuable
+
+``` {r algorithm 04, warning=FALSE, message=FALSE, echo = TRUE}
+
+## Look at a Random Forest incorporating all components of time
+
+nodesize <- seq(1, 7, 1)
+
+rmses <- sapply(nodesize, function(n){
+  rf_time = randomForest(closing_price ~ 
+                           date_weekday +
+                           date_month_of_the_year +
+                           date_quarter_of_the_year +
+                           date_year +
+                           date_month, 
+                         data = gasoline_train, 
+                         nodesize = n)
+  pred <- predict(rf_time, 
+                  newdata = gasoline_train)
+  RMSE(pred, 
+       gasoline_train$closing_price)
+})
+
+## Build a qplot of the RMSE results generated for each of the evaluated node sizes
+
+qplot(nodesize, rmses)
+
+## Run the Random Forest model with the node size that generated the smallest RMSE
+
+nodesize[which.min(rmses)]
+
+rf_time = randomForest(closing_price ~ 
+                         date_weekday +
+                         date_month_of_the_year +
+                         date_quarter_of_the_year +
+                         date_year +
+                         date_month, 
+                       data = gasoline_train, 
+                       nodesize = nodesize[which.min(rmses)])
+
+## Build plot to help determine which components is/are the most important predictors
+
+varImpPlot(rf_time)
+
+## Based on that plot, revise Random Forest to focus on the month and the year
+
+nodesize <- seq(1, 7, 1)
+
+rmses <- sapply(nodesize, function(n){
+  rf_time = randomForest(closing_price ~ 
+                           date_month +
+                           date_year, 
+                         data = gasoline_train, 
+                         nodesize = n)
+  pred <- predict(rf_time, 
+                  newdata = gasoline_train)
+  RMSE(pred, 
+       gasoline_train$closing_price)
+})
+
+qplot(nodesize, rmses)
+
+nodesize[which.min(rmses)]
+
+rf_time = randomForest(closing_price ~ 
+                         date_month +
+                         date_year, 
+                       data = gasoline_train, 
+                       nodesize = nodesize[which.min(rmses)])
+
+pred <- predict(rf_time, newdata = gasoline_train)
+
+predicted_price_algorithm_04 <- 
+  predict(rf_time, 
+          newdata = gasoline_validate)
+
+RMSE04 <- RMSE(predicted_price_algorithm_04, 
+               gasoline_validate$closing_price)
+
+RMSE04
+
+```
+#### Algorithm 05 (KNN - Time)
+
+With the intention of finding an algorithm that would be of significant analytical value, attention shifted again, this time to an algorithm that predicted gasoline closing prices based on a K-Nearest Neighbors (KNN) model of the two key time components: *year* and *month*. The RMSE, although not significantly better than the outcome obtained from a simple model of the effects of the month-by-month average closing price, was strong enough to suggest that KNN would be worthy of further investigation when the time came to consider not only the time components but the prices of complementary and competing commodities from the energy, precious metals, and agriculture sectors.
+
+``` {r algorithm 05, warning=FALSE, message=FALSE, echo = TRUE}
+
+knn_time <- 
+  train(closing_price ~ 
+          date_year + 
+          date_month, 
+        method = "knn",
+        data = gasoline_train)
+
+ggplot(knn_time, highlight = TRUE)
+
+pred <- predict(knn_time, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_05 <- 
+  predict(knn_time, 
+          newdata = gasoline_validate)
+
+RMSE05 <- RMSE(predicted_price_algorithm_05, 
+               gasoline_validate$closing_price)
+
+RMSE05
+
+```
+### Algorithm 06 (Ranger - Time)
+
+The continued quest for a lower RMSE and, with it, a more valuable algorithm led to the use of a Ranger model incorporating *year* and *month*.  That effort's outcome suggested the Ranger model, alongside KNN, be worthy of further investigation when the time came to consider not only the key time components but the prices of complementary and competing commodities from the energy, precious metals, and agriculture sectors.
+
+``` {r algorithm 06, warning=FALSE, message=FALSE, echo = TRUE}
+
+ranger_time <- 
+  train(closing_price ~ 
+          date_year + 
+          date_month, 
+        method = "ranger",
+        data = gasoline_train)
+
+ggplot(ranger_time, highlight = TRUE)
+
+pred <- predict(ranger_time, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_06 <- 
+  predict(ranger_time, 
+          newdata = gasoline_validate)
+
+RMSE06 <- RMSE(predicted_price_algorithm_06,
+               gasoline_validate$closing_price)
+
+RMSE06
+
+```
+#### Algorithm 07 (KNN - Time and Energy)
+
+Continuing the question for a lower RMSE, the focus of the algorithm effort fell on the use of a KNN model that took into account not only *year* and *month* but the closing prices of two energy sector commodities: *heating oil* and *crude oil*.  The generated RMSE, the first to cross below the 0.08 (13% of the RMSE generated by the first algorithm) threshold, spoke to the potential that the seventh algorithm would be of significant analytical value.
+
+``` {r algorithm 07, warning=FALSE, message=FALSE, echo = TRUE}
+
+knn_time_energy <- 
+  train(closing_price ~ 
+          date_year + 
+          date_month + 
+          heating_oil_closing_price + 
+          crude_oil_closing_price,
+        method = "knn",
+        data = gasoline_train)
+
+ggplot(knn_time_energy, highlight = TRUE)
+
+pred <- predict(knn_time_energy, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_07 <- 
+  predict(knn_time_energy, 
+          newdata = gasoline_validate)
+
+RMSE07 <- RMSE(predicted_price_algorithm_07, 
+               gasoline_validate$closing_price)
+
+RMSE07
+
+```
+#### Algorithm 08 (Ranger - Time and Energy)
+
+The next attempt centered on the use of a Ranger model that also took into account not only *year* and *month* but the closing prices of two energy sector commodities: *heating oil* and *crude oil*.  The generated RMSE, the first to cross below the 0.07 (11% of the RMSE generated by the first algorithm) threshold, spoke to the potential that the eighth algorithm would, like the seventh, be of significant analytical value.
+
+``` {r algorithm 08, warning=FALSE, message=FALSE, echo = TRUE}
+
+ranger_time_energy <- 
+  train(closing_price ~ 
+          date_year + 
+          date_month + 
+          heating_oil_closing_price + 
+          crude_oil_closing_price,
+        method = "ranger",
+        data = gasoline_train)
+
+ggplot(ranger_time_energy, highlight = TRUE)
+
+pred <- predict(ranger_time_energy, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_08 <- 
+  predict(ranger_time_energy, 
+          newdata = gasoline_validate)
+
+RMSE08 <- RMSE(predicted_price_algorithm_08, 
+               gasoline_validate$closing_price)
+
+RMSE08
+
+```
+#### Algorithm 09 (KNN - Time, Energy, Precious Metals, Agriculture)
+
+Incorporating the rest of the promising predictors and leveraging the identified strength of KNN, the next step entailed evaluating an algorithm that made use of a KNN model accounting for not only *year*, *month*, and the closing prices of *heating oil* and *crude oil* but the closing prices of *platinum*, *silver*, *wheat*, and *soybeans*.  The generated algorithm turned-out not to be as strong as anticipated.  Therefore, the ninth algorithm was not deemed to be as analytically valuable as the seventh or eighth.
+
+``` {r algorithm 09, warning=FALSE, message=FALSE, echo = TRUE}
+
+knn_time_energy_precious_metals_agriculture <- 
+  train(closing_price ~
+          date_year + 
+          date_month + 
+          heating_oil_closing_price +
+          crude_oil_closing_price +
+          platinum_closing_price +
+          silver_closing_price +
+          wheat_closing_price +
+          soybeans_closing_price,
+          method = "knn",
+        data = gasoline_train)
+
+ggplot(knn_time_energy, highlight = TRUE)
+
+pred <- predict(knn_time_energy_precious_metals_agriculture, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_09 <- 
+  predict(knn_time_energy_precious_metals_agriculture, 
+          newdata = gasoline_validate)
+
+RMSE09 <- RMSE(predicted_price_algorithm_09, 
+               gasoline_validate$closing_price)
+
+RMSE09
+
+```
+#### Algorithm 10 (Ranger - Time, Energy, Precious Metals, Agriculture)
+
+Now incorporating the rest of the promising predictors and leveraging the identified strength of Ranger, the penultimate step of this phase of the project entailed evaluating an algorithm that made use of a Ranger model accounting for *year* and *month* as well as the closing prices of *heating oil*, *crude oil*, *platinum*, *silver*, *wheat*, and *soybeans*.  The generated algorithm turned-out be very strong, having an RMSE equating to 9% of the RMSE generated by the first algorithm.  Because of its strength, it appeared to be of particularly high value to those who analyze the gasoline industry by tracking gasoline's rises and falls in commodity markets.
+
+``` {r algorithm 10, warning=FALSE, message=FALSE, echo = TRUE}
+
+ranger_time_energy_precious_metals_agriculture <- 
+  train(closing_price ~
+          date_year + 
+          date_month + 
+          heating_oil_closing_price +
+          crude_oil_closing_price +
+          platinum_closing_price +
+          silver_closing_price +
+          wheat_closing_price +
+          soybeans_closing_price,
+          method = "ranger",
+        data = gasoline_train)
+
+ggplot(ranger_time_energy_precious_metals_agriculture, highlight = TRUE)
+
+pred <- predict(ranger_time_energy_precious_metals_agriculture, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_10 <- 
+  predict(ranger_time_energy_precious_metals_agriculture, 
+          newdata = gasoline_validate)
+
+RMSE10 <- RMSE(predicted_price_algorithm_10, 
+               gasoline_validate$closing_price)
+
+RMSE10
+
+```
+#### Algorithm 11 (GAM - Time, Energy, Precious Metals, Agriculture)
+
+The final step of this phase of the project called for using the Generalized Additive Model (GAM) to take one more look at ways to lower the GMSE below the already-low level achieved via the Ranger model that took into account *year* and *month* as well as the closing prices of *heating oil*, *crude oil*, *platinum*, *silver*, *wheat* and *soybeans*.  That eleventh and last algorithm did not generate a result that suggested GAM would be a viable alternative to Ranger or even KNN.
+
+``` {r algorithm 11, warning=FALSE, message=FALSE, echo = TRUE}
+
+gam_time_energy_precious_metals_agriculture <- 
+  train(closing_price ~
+          date_year + 
+          date_month + 
+          heating_oil_closing_price +
+          crude_oil_closing_price +
+          platinum_closing_price +
+          silver_closing_price +
+          wheat_closing_price +
+          soybeans_closing_price,
+          method = "gam",
+        data = gasoline_train)
+
+pred <- predict(gam_time_energy_precious_metals_agriculture, 
+                newdata = gasoline_train)
+
+predicted_price_algorithm_11 <- 
+  predict(gam_time_energy_precious_metals_agriculture, 
+          newdata = gasoline_validate)
+
+RMSE11 <- RMSE(predicted_price_algorithm_11, 
+               gasoline_validate$closing_price)
+
+RMSE11
+
+```
+\newpage
+
+## Results
+
+##### Tabulating the Results
+
+Of the eleven algorithms evaluated with the *validation* set, the strongest was the one that made use of a Ranger model and took into account the eight predictors identified as promising in the exploratory data analysis phase.  Those eight predictors were the *year* and *month* components of time, the closing prices of the complementary *heating oil* and *crude oil* commodities from the energy sector, and the closing prices of the competing *platinum*, "silver*, *wheat*, and *soybean* commodities from the precious metals and agriculture sectors.
+
+``` {r result tabulation, warning=FALSE, message=FALSE, echo = FALSE}
+
+Algorithm <- c("01",
+               "02",
+               "03",
+               "04",
+               "05",
+               "06",
+               "07",
+               "08",
+               "09",
+               "10",
+               "11")
+
+Title <- c("Average Closing Price",
+           "Average Closing Price plus Year Effects",
+           "Average Closing Price Plus Month Effects",
+           "Random Forest - Time",
+           "KNN Model - Time",
+           "Ranger Model - Time",
+           "KNN Model - Time and Energy",
+           "Ranger Model - Time and Energy",
+           "KNN Model - Time, Energy, Precious Metals, Agriculture",
+           "Ranger Model - Time, Energy, Precious Metals, Agriculture",
+           "GAM - Time, Energy, Precious Metals, Agriculture")
+  
+Result <- c(RMSE01,
+            RMSE02,
+            RMSE03,
+            RMSE04,
+            RMSE05,
+            RMSE06,
+            RMSE07,
+            RMSE08,
+            RMSE09,
+            RMSE10,
+            RMSE11)
+
+Results <- data.frame(Algorithm, Title, Result)
+
+Results %>%
+  arrange(Result) %>%
+  kable()
+
+
+```
+
+
+##### Putting the Final Algorithm to the Test
+
+The strongest algorithm, the one that made use of a Ranger model that took into the account the eight most promising predictors identified in the exploratory data analysis phase, was applied to the 31% hold-out *test* set.  The result, an RMSE equating to 9% of the RMSE generated by simply using the average price across the 2010-2020 period of observation, confirmed the discovery of an algorithm of robust analytical value.  We had found a tool that would be of use to those engaged in monitoring a commodity of great importance not only to producers and consumers but, as laid-out in the introductory section of this report, all of the planet's inhabitants.
+
+
+``` {r test of final algorithm, warning=FALSE, message=FALSE, echo = TRUE}
+
+predicted_price_algorithm_10 <- 
+  predict(ranger_time_energy_precious_metals_agriculture, 
+          newdata = gasoline_test)
+
+RMSE_final <- RMSE(predicted_price_algorithm_10, 
+               gasoline_test$closing_price)
+
+RMSE_final
+
+```
+\newpage
+
+## Conclusions
+
+##### Summary
+
+The purpose of this project was to select an algorithm capable of predicting gasoline closing prices with an analytically viable RMSE. Eleven algorithms were developed and evaluated. The one selected at the end of the evaluation process made use of a Ranger model taking into account eight predictors: the *year* and *month* components of time, the closing prices of the complementary *heating oil* and *crude oil* commodities from the energy sector, and the closing prices of the competing *platinum*, *silver*, and *wheat*, and *soybeans* commodities from the precious metals and agriculture sectors. When tested against a 31%-holdout data set, it generated an RMSE of 0.055, equating to a mere 9% of the RMSE resulting from a simply algorithm that relied on the average closing price across the volatile 2010-2020 period of observation.
+
+##### Limitations
+
+This project used a ten-year period of observation and only took into account three widely traded commodities each from the energy, precious metals, and agriculture sectors of the global marketplace.  A more complete analysis would use a longer period of observation and take into account additional commodities, particularly from the base metals and livestock sectors, as well as such additional predictors as stock prices and currency values.  The premise is that more could be learned about oil by further exploring the behaviors of investors who make day-to-day "bets" on crude oil based on their running evaluations of relative risks and rewards.
+
+##### Future Work
+
+The author, whose interest in gasoline was piqued by this opportunity to use data to explore generally unfamilar data, is keen on using not only the additional data summarized in the preceding paragraph but additonal tools to assemble a more accurate model for predicting the closing prices of gasoline.  The motivation for such an endeavor is the knowledge that gasoline has long had and will long continue to have wide-ranging impacts, both of the beneficial and detrimental varieties, on not only the few who produce it and the many who consume it but all of us who share this planet.
+
